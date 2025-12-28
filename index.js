@@ -1,36 +1,44 @@
-// --- TRUQUE PARA O RENDER NÃO DESLIGAR (SERVIDOR WEB FALSO) ---
-const http = require('http');
-const port = process.env.PORT || 3000;
+const http = require('http'); // Módulo do servidor web
+const { Client, LocalAuth } = require('whatsapp-web.js'); // Módulo do Zap
+const qrcode = require('qrcode-terminal');
+const config = require('./loja_config'); // Suas configurações
 
+// --- 1. O TRUQUE DO SERVIDOR (Para o Render ficar verde e não desligar) ---
+const port = process.env.PORT || 3000;
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('O Robo Dona Baguete esta vivo!');
 });
-
 server.listen(port, () => {
     console.log(`Servidor web ouvindo na porta ${port}`);
 });
-// -------------------------------------------------------------
+// ------------------------------------------------------------------------
 
-const { Client, LocalAuth } = require('whatsapp-web.js');
-// ... resto do código continua igual ...
-
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
-
-// IMPORTA AS CONFIGURAÇÕES DA LOJA (O ARQUIVO NOVO)
-const config = require('./loja_config');
-
+// --- 2. CLIENTE DO WHATSAPP (Com proteção para Linux/Render) ---
 const client = new Client({
-    authStrategy: new LocalAuth()
+    authStrategy: new LocalAuth(),
+    puppeteer: {
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',
+            '--gpu-context-lost'
+        ]
+    }
 });
 
+// --- 3. LÓGICA DO ROBÔ ---
 const sessoes = {}; 
 const STAGES = { INICIO: 0, MENU: 1, ESCOLHA_QUEIJO: 2, ADICIONAIS_ITEM: 3, OBSERVACOES: 4, MORADA: 5, PAGAMENTO: 6, TROCO: 7 };
 
 client.on('qr', (qr) => {
     qrcode.generate(qr, { small: true });
-    console.log('>>> LEIA O QR CODE <<<');
+    console.log('\n>>> LEIA O QR CODE ABAIXO PARA CONECTAR <<<\n');
 });
 
 client.on('ready', () => {
@@ -80,13 +88,12 @@ client.on('message', async message => {
         sessoes[from] = { stage: STAGES.INICIO, itens: [], total: 0 };
     }
 
-    // --- ETAPA 0: INÍCIO (Monta menu dinamicamente) ---
+    // --- ETAPA 0: INÍCIO ---
     if (sessao.stage === STAGES.INICIO) {
         let msg = `👋 Bem-vindo ao *${config.nomeLoja}*!\n${config.mensagemSaudacao}\n\nCardápio:\n`;
         
         for (const k in config.menu) {
             const item = config.menu[k];
-            // Formatação inteligente: Se tiver descrição, mostra embaixo
             msg += `*${k}* - ${item.titulo} - R$ ${item.preco.toFixed(2)}\n`;
             if(item.descricao) msg += `   _(${item.descricao})_\n`;
         }
@@ -104,11 +111,7 @@ client.on('message', async message => {
             
             if (itemSelecionado.tipo === 'lanche') {
                 sessao.itemTemp = { ...itemSelecionado, precoBase: itemSelecionado.preco, adicionais: [] };
-                
-                await client.sendMessage(from, 
-                    `🧀 Você escolheu *${itemSelecionado.titulo}*.\n` +
-                    `Qual queijo? (1. Prato / 2. Mussarela / 3. Catupiry)`
-                );
+                await client.sendMessage(from, `🧀 Você escolheu *${itemSelecionado.titulo}*.\nQual queijo? (1. Prato / 2. Mussarela / 3. Catupiry)`);
                 sessao.stage = STAGES.ESCOLHA_QUEIJO;
             } else {
                 sessao.itens.push({ ...itemSelecionado, precoBase: itemSelecionado.preco, titulo: itemSelecionado.titulo, adicionais: [] });
@@ -137,11 +140,9 @@ client.on('message', async message => {
         
         if (queijo) {
             sessao.itemTemp.titulo = `${sessao.itemTemp.titulo} (${queijo})`;
-            
             let msgAdic = `🛠 Adicionais para *${sessao.itemTemp.titulo}*?\n`;
             for (const k in config.adicionais) msgAdic += `*${k}* - ${config.adicionais[k].nome} (+R$${config.adicionais[k].preco})\n`;
             msgAdic += `\nDigite o código ou *NÃO*.`;
-            
             await client.sendMessage(from, msgAdic);
             sessao.stage = STAGES.ADICIONAIS_ITEM;
         } else {
