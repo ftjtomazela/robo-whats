@@ -1,3 +1,20 @@
+// --- TRUQUE PARA O RENDER NÃO DESLIGAR (SERVIDOR WEB FALSO) ---
+const http = require('http');
+const port = process.env.PORT || 3000;
+
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('O Robo Dona Baguete esta vivo!');
+});
+
+server.listen(port, () => {
+    console.log(`Servidor web ouvindo na porta ${port}`);
+});
+// -------------------------------------------------------------
+
+const { Client, LocalAuth } = require('whatsapp-web.js');
+// ... resto do código continua igual ...
+
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 
