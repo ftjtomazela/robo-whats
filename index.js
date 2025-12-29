@@ -1,27 +1,29 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode'); // Biblioteca para gerar imagem (não terminal)
-const express = require('express'); // Servidor web mais robusto
-const config = require('./loja_config'); // Suas configurações
+const qrcode = require('qrcode');
+const express = require('express');
+const config = require('./loja_config');
 
-// --- 1. CONFIGURAÇÃO DO SERVIDOR WEB (Para mostrar o QR Code) ---
 const app = express();
 const port = process.env.PORT || 10000;
 
-let qrCodeImage = ''; // Variável para guardar a imagem do QR
-let statusBot = 'Iniciando sistema...';
+let qrCodeImage = '';
+let statusBot = 'Iniciando sistema... (Aguarde)';
 
+// --- SERVIDOR WEB ---
 app.get('/', (req, res) => {
-    // Cria um site simples que se atualiza sozinho
     const html = `
         <html>
             <head>
                 <title>Robô Dona Baguete</title>
-                <meta http-equiv="refresh" content="5"> <style>
-                    body { font-family: Arial, sans-serif; text-align: center; padding: 40px; background-color: #f4f4f9; }
-                    .box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); display: inline-block; }
-                    h1 { color: #333; }
-                    .status { font-weight: bold; color: #007bff; }
-                    .connected { color: green; }
+                <meta http-equiv="refresh" content="5">
+                <style>
+                    body { font-family: sans-serif; text-align: center; padding: 20px; background: #eee; }
+                    .box { background: white; padding: 30px; border-radius: 15px; display: inline-block; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+                    h1 { color: #444; margin-bottom: 10px; }
+                    .status { font-weight: bold; color: #d35400; font-size: 1.2em; }
+                    .connected { color: #27ae60; }
+                    img { margin-top: 20px; border: 5px solid #333; border-radius: 10px; }
+                    p.aviso { font-size: 0.9em; color: #666; max-width: 400px; margin: 10px auto; }
                 </style>
             </head>
             <body>
@@ -29,8 +31,13 @@ app.get('/', (req, res) => {
                     <h1>🥪 Painel Dona Baguete</h1>
                     <p>Status: <span class="status ${statusBot.includes('Sucesso') ? 'connected' : ''}">${statusBot}</span></p>
                     <hr/>
-                    ${qrCodeImage ? `<p>Leia o QR Code no seu WhatsApp:</p><img src="${qrCodeImage}" width="300"/>` : ''}
-                    ${!qrCodeImage && !statusBot.includes('Sucesso') ? '<p>Gerando QR Code... Aguarde...</p>' : ''}
+                    ${qrCodeImage ? `
+                        <p><strong>Escaneie com seu WhatsApp:</strong></p>
+                        <img src="${qrCodeImage}" width="280"/>
+                        <p class="aviso">Se der erro ao conectar, aguarde 10 segundos e atualize a página para tentar um novo código.</p>
+                    ` : ''}
+                    
+                    ${!qrCodeImage && !statusBot.includes('Sucesso') ? '<p>🚀 Ligando motores... Isso pode levar até 1 minuto.</p>' : ''}
                 </div>
             </body>
         </html>
@@ -39,14 +46,16 @@ app.get('/', (req, res) => {
 });
 
 app.listen(port, () => {
-    console.log(`Servidor web rodando na porta ${port}`);
+    console.log(`Servidor rodando na porta ${port}`);
 });
 
-// --- 2. CLIENTE DO WHATSAPP ---
+// --- CLIENTE WHATSAPP COM CAMUFLAGEM ---
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
+        // CAMUFLAGEM: Finge ser um Chrome normal no Windows
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -57,21 +66,32 @@ const client = new Client({
             '--single-process',
             '--gpu-context-lost'
         ]
-    }
+    },
+    // Aumenta tolerância para internet lenta do Render
+    qrMaxRetries: 5,
+    authTimeoutMs: 60000, 
 });
 
-// --- Eventos de Conexão ---
 client.on('qr', async (qr) => {
-    console.log('QR Code recebido! Atualizando site...');
-    // Converte o código em uma imagem para exibir no navegador
+    console.log('Novo QR Code gerado!');
     qrCodeImage = await qrcode.toDataURL(qr);
     statusBot = 'Aguardando leitura do QR Code...';
 });
 
 client.on('ready', () => {
-    console.log(`✅ ${config.nomeLoja} ESTÁ ON-LINE!`);
+    console.log(`✅ ${config.nomeLoja} CONECTADO!`);
     statusBot = 'Bot Conectado com Sucesso! ✅';
-    qrCodeImage = ''; // Limpa o QR Code da tela
+    qrCodeImage = '';
+});
+
+client.on('authenticated', () => {
+    console.log('Autenticado com sucesso!');
+    statusBot = 'Autenticado! Carregando chats...';
+});
+
+client.on('auth_failure', msg => {
+    console.error('Falha na autenticação', msg);
+    statusBot = 'Falha na autenticação. Reiniciando...';
 });
 
 client.on('disconnected', (reason) => {
@@ -80,7 +100,7 @@ client.on('disconnected', (reason) => {
     client.initialize();
 });
 
-// --- 3. LÓGICA DO ROBÔ (SEU CÓDIGO ORIGINAL) ---
+// --- LÓGICA DO ROBÔ ---
 const sessoes = {}; 
 const STAGES = { INICIO: 0, MENU: 1, ESCOLHA_QUEIJO: 2, ADICIONAIS_ITEM: 3, OBSERVACOES: 4, MORADA: 5, PAGAMENTO: 6, TROCO: 7 };
 
@@ -96,19 +116,16 @@ client.on('message', async message => {
     }
     const sessao = sessoes[from];
 
-    // --- FUNÇÃO GENÉRICA DE RESUMO ---
+    // --- FUNÇÕES ---
     async function finalizarPedido(metodoPagamento, infoTroco = '') {
         let resumo = `📝 *PEDIDO - ${config.nomeLoja.toUpperCase()}*\n----------------------\n`;
-        
         sessao.itens.forEach(i => {
             resumo += `▪️ ${i.titulo} (R$ ${i.precoBase.toFixed(2)})\n`;
             if (i.adicionais && i.adicionais.length > 0) {
                 i.adicionais.forEach(a => resumo += `   + ${a.nome} (R$ ${a.preco.toFixed(2)})\n`);
             }
         });
-        
         if (sessao.obs) resumo += `\n⚠️ *Obs:* ${sessao.obs}\n`;
-        
         resumo += `----------------------\n`;
         resumo += `🛵 Entrega: R$ ${config.taxaEntrega.toFixed(2)}\n`;
         resumo += `💰 *TOTAL: R$ ${sessao.total.toFixed(2)}*\n`;
@@ -118,129 +135,97 @@ client.on('message', async message => {
         resumo += `Obrigado! Enviando para preparação... 🔥`;
 
         await client.sendMessage(from, resumo);
-        
         if (metodoPagamento === 'Pix') {
-            await client.sendMessage(from, 
-                `💠 *DADOS PIX:*\n🔑 Chave: ${config.pixChave}\n👤 Nome: ${config.pixNome}\n\n_Envie o comprovante!_`
-            );
+            await client.sendMessage(from, `💠 *DADOS PIX:*\n🔑 Chave: ${config.pixChave}\n👤 Nome: ${config.pixNome}\n\n_Envie o comprovante!_`);
         }
         sessoes[from] = { stage: STAGES.INICIO, itens: [], total: 0 };
     }
 
-    // --- ETAPA 0: INÍCIO ---
+    // --- FLUXO ---
     if (sessao.stage === STAGES.INICIO) {
         let msg = `👋 Bem-vindo ao *${config.nomeLoja}*!\n${config.mensagemSaudacao}\n\nCardápio:\n`;
-        
         for (const k in config.menu) {
             const item = config.menu[k];
             msg += `*${k}* - ${item.titulo} - R$ ${item.preco.toFixed(2)}\n`;
             if(item.descricao) msg += `   _(${item.descricao})_\n`;
         }
-
         msg += `\n🛵 Taxa Entrega: R$ ${config.taxaEntrega.toFixed(2)}\n⬇️ *Digite o número do item:*`;
-
         await client.sendMessage(from, msg);
         sessao.stage = STAGES.MENU;
     }
-
-    // --- ETAPA 1: MENU ---
     else if (sessao.stage === STAGES.MENU) {
         if (config.menu[texto]) {
-            const itemSelecionado = config.menu[texto];
-            
-            if (itemSelecionado.tipo === 'lanche') {
-                sessao.itemTemp = { ...itemSelecionado, precoBase: itemSelecionado.preco, adicionais: [] };
-                await client.sendMessage(from, `🧀 Você escolheu *${itemSelecionado.titulo}*.\nQual queijo? (1. Prato / 2. Mussarela / 3. Catupiry)`);
+            const item = config.menu[texto];
+            if (item.tipo === 'lanche') {
+                sessao.itemTemp = { ...item, precoBase: item.preco, adicionais: [] };
+                await client.sendMessage(from, `🧀 Você escolheu *${item.titulo}*.\nQual queijo? (1. Prato / 2. Mussarela / 3. Catupiry)`);
                 sessao.stage = STAGES.ESCOLHA_QUEIJO;
             } else {
-                sessao.itens.push({ ...itemSelecionado, precoBase: itemSelecionado.preco, titulo: itemSelecionado.titulo, adicionais: [] });
-                sessao.total += itemSelecionado.preco;
-                await client.sendMessage(from, `✅ *${itemSelecionado.titulo}* add! Digite outro ou *AVANÇAR*.`);
+                sessao.itens.push({ ...item, precoBase: item.preco, titulo: item.titulo, adicionais: [] });
+                sessao.total += item.preco;
+                await client.sendMessage(from, `✅ *${item.titulo}* add! Digite outro ou *AVANÇAR*.`);
             }
-        } 
-        else if (['avançar', 'avancar', 'fim'].includes(texto)) {
-            if (sessao.itens.length === 0) {
-                await client.sendMessage(from, 'Carrinho vazio!');
-            } else {
-                await client.sendMessage(from, `📝 *Observações/Remoções?* Digite ou *NADA*.`);
+        } else if (['avançar', 'avancar', 'fim'].includes(texto)) {
+            if (sessao.itens.length === 0) await client.sendMessage(from, 'Carrinho vazio!');
+            else {
+                await client.sendMessage(from, `📝 *Observações?* Digite ou *NADA*.`);
                 sessao.stage = STAGES.OBSERVACOES;
             }
-        } else {
-            await client.sendMessage(from, '❌ Digite o número do item.');
-        }
+        } else await client.sendMessage(from, '❌ Digite o número do item.');
     }
-
-    // --- ETAPA 2: QUEIJO ---
     else if (sessao.stage === STAGES.ESCOLHA_QUEIJO) {
         let queijo = '';
         if (texto.includes('1') || texto.includes('prato')) queijo = 'Queijo Prato';
         else if (texto.includes('2') || texto.includes('mussarela')) queijo = 'Queijo Mussarela';
-        else if (texto.includes('3') || texto.includes('catupiry')) queijo = 'Catupiry (Recheio)';
+        else if (texto.includes('3') || texto.includes('catupiry')) queijo = 'Catupiry';
         
         if (queijo) {
-            sessao.itemTemp.titulo = `${sessao.itemTemp.titulo} (${queijo})`;
-            let msgAdic = `🛠 Adicionais para *${sessao.itemTemp.titulo}*?\n`;
-            for (const k in config.adicionais) msgAdic += `*${k}* - ${config.adicionais[k].nome} (+R$${config.adicionais[k].preco})\n`;
-            msgAdic += `\nDigite o código ou *NÃO*.`;
-            await client.sendMessage(from, msgAdic);
+            sessao.itemTemp.titulo += ` (${queijo})`;
+            let msg = `🛠 Adicionais para *${sessao.itemTemp.titulo}*?\n`;
+            for (const k in config.adicionais) msg += `*${k}* - ${config.adicionais[k].nome} (+R$${config.adicionais[k].preco})\n`;
+            msg += `\nDigite o código ou *NÃO*.`;
+            await client.sendMessage(from, msg);
             sessao.stage = STAGES.ADICIONAIS_ITEM;
-        } else {
-            await client.sendMessage(from, '❌ Digite 1, 2 ou 3.');
-        }
+        } else await client.sendMessage(from, '❌ Digite 1, 2 ou 3.');
     }
-
-    // --- ETAPA 3: ADICIONAIS DO ITEM ---
     else if (sessao.stage === STAGES.ADICIONAIS_ITEM) {
         if (config.adicionais[texto]) {
             const adic = config.adicionais[texto];
             sessao.itemTemp.adicionais.push(adic);
             await client.sendMessage(from, `➕ *${adic.nome}* add! Mais algum? (Código ou NÃO).`);
-        } 
-        else if (['nao', 'não', 'ok', 'nada'].includes(texto)) {
-            const precoTotalItem = sessao.itemTemp.precoBase + sessao.itemTemp.adicionais.reduce((a, b) => a + b.preco, 0);
-            sessao.total += precoTotalItem;
+        } else if (['nao', 'não', 'ok', 'nada'].includes(texto)) {
+            const totalItem = sessao.itemTemp.precoBase + sessao.itemTemp.adicionais.reduce((a,b)=>a+b.preco,0);
+            sessao.total += totalItem;
             sessao.itens.push(sessao.itemTemp);
             sessao.itemTemp = null;
             await client.sendMessage(from, `✅ Item confirmado! Escolha OUTRO ou *AVANÇAR*.`);
             sessao.stage = STAGES.MENU;
         }
     }
-
-    // --- ETAPA 4: OBSERVAÇÕES ---
     else if (sessao.stage === STAGES.OBSERVACOES) {
-        sessao.obs = (['nada', 'nao', 'ok'].includes(texto)) ? '' : message.body;
+        sessao.obs = (['nada', 'nao'].includes(texto)) ? '' : message.body;
         sessao.total += config.taxaEntrega;
-        await client.sendMessage(from, `📍 Digite seu *ENDEREÇO COMPLETO*:`);
+        await client.sendMessage(from, `📍 *ENDEREÇO COMPLETO*:`);
         sessao.stage = STAGES.MORADA;
     }
-
-    // --- ETAPA 5: ENDEREÇO ---
     else if (sessao.stage === STAGES.MORADA) {
         sessao.endereco = message.body;
         await client.sendMessage(from, `💳 Total: R$ ${sessao.total.toFixed(2)}\nPagamento?\n1. Dinheiro\n2. Cartão\n3. Pix`);
         sessao.stage = STAGES.PAGAMENTO;
     }
-
-    // --- ETAPA 6: PAGAMENTO ---
     else if (sessao.stage === STAGES.PAGAMENTO) {
         if (texto.includes('1') || texto.includes('dinheiro')) {
-            await client.sendMessage(from, `💵 Troco para quanto? (Digite valor ou NÃO)`);
+            await client.sendMessage(from, `💵 Troco para quanto? (Valor ou NÃO)`);
             sessao.stage = STAGES.TROCO;
         }
         else if (texto.includes('2') || texto.includes('cartao')) await finalizarPedido('Cartão');
         else if (texto.includes('3') || texto.includes('pix')) await finalizarPedido('Pix');
     }
-
-    // --- ETAPA 7: TROCO ---
     else if (sessao.stage === STAGES.TROCO) {
-        const valor = parseFloat(texto.replace(',', '.'));
-        if (!isNaN(valor) && valor >= sessao.total) {
-            await finalizarPedido('Dinheiro', `(Troco p/ ${valor} -> ${valor - sessao.total})`);
-        } else {
-            await finalizarPedido('Dinheiro', '(Sem troco)');
-        }
+        const val = parseFloat(texto.replace(',', '.'));
+        if (!isNaN(val) && val >= sessao.total) await finalizarPedido('Dinheiro', `(Troco p/ ${val})`);
+        else await finalizarPedido('Dinheiro', '(Sem troco)');
     }
 });
 
-// Inicializa o robô
 client.initialize();
