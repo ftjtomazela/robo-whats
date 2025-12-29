@@ -1,20 +1,48 @@
-const http = require('http'); // Módulo do servidor web
-const { Client, LocalAuth } = require('whatsapp-web.js'); // Módulo do Zap
-const qrcode = require('qrcode-terminal');
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode'); // Biblioteca para gerar imagem (não terminal)
+const express = require('express'); // Servidor web mais robusto
 const config = require('./loja_config'); // Suas configurações
 
-// --- 1. O TRUQUE DO SERVIDOR (Para o Render ficar verde e não desligar) ---
-const port = process.env.PORT || 3000;
-const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('O Robo Dona Baguete esta vivo!');
-});
-server.listen(port, () => {
-    console.log(`Servidor web ouvindo na porta ${port}`);
-});
-// ------------------------------------------------------------------------
+// --- 1. CONFIGURAÇÃO DO SERVIDOR WEB (Para mostrar o QR Code) ---
+const app = express();
+const port = process.env.PORT || 10000;
 
-// --- 2. CLIENTE DO WHATSAPP (Com proteção para Linux/Render) ---
+let qrCodeImage = ''; // Variável para guardar a imagem do QR
+let statusBot = 'Iniciando sistema...';
+
+app.get('/', (req, res) => {
+    // Cria um site simples que se atualiza sozinho
+    const html = `
+        <html>
+            <head>
+                <title>Robô Dona Baguete</title>
+                <meta http-equiv="refresh" content="5"> <style>
+                    body { font-family: Arial, sans-serif; text-align: center; padding: 40px; background-color: #f4f4f9; }
+                    .box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); display: inline-block; }
+                    h1 { color: #333; }
+                    .status { font-weight: bold; color: #007bff; }
+                    .connected { color: green; }
+                </style>
+            </head>
+            <body>
+                <div class="box">
+                    <h1>🥪 Painel Dona Baguete</h1>
+                    <p>Status: <span class="status ${statusBot.includes('Sucesso') ? 'connected' : ''}">${statusBot}</span></p>
+                    <hr/>
+                    ${qrCodeImage ? `<p>Leia o QR Code no seu WhatsApp:</p><img src="${qrCodeImage}" width="300"/>` : ''}
+                    ${!qrCodeImage && !statusBot.includes('Sucesso') ? '<p>Gerando QR Code... Aguarde...</p>' : ''}
+                </div>
+            </body>
+        </html>
+    `;
+    res.send(html);
+});
+
+app.listen(port, () => {
+    console.log(`Servidor web rodando na porta ${port}`);
+});
+
+// --- 2. CLIENTE DO WHATSAPP ---
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
@@ -32,18 +60,29 @@ const client = new Client({
     }
 });
 
-// --- 3. LÓGICA DO ROBÔ ---
-const sessoes = {}; 
-const STAGES = { INICIO: 0, MENU: 1, ESCOLHA_QUEIJO: 2, ADICIONAIS_ITEM: 3, OBSERVACOES: 4, MORADA: 5, PAGAMENTO: 6, TROCO: 7 };
-
-client.on('qr', (qr) => {
-    qrcode.generate(qr, { small: true });
-    console.log('\n>>> LEIA O QR CODE ABAIXO PARA CONECTAR <<<\n');
+// --- Eventos de Conexão ---
+client.on('qr', async (qr) => {
+    console.log('QR Code recebido! Atualizando site...');
+    // Converte o código em uma imagem para exibir no navegador
+    qrCodeImage = await qrcode.toDataURL(qr);
+    statusBot = 'Aguardando leitura do QR Code...';
 });
 
 client.on('ready', () => {
     console.log(`✅ ${config.nomeLoja} ESTÁ ON-LINE!`);
+    statusBot = 'Bot Conectado com Sucesso! ✅';
+    qrCodeImage = ''; // Limpa o QR Code da tela
 });
+
+client.on('disconnected', (reason) => {
+    console.log('Cliente desconectado:', reason);
+    statusBot = 'Desconectado. Reiniciando...';
+    client.initialize();
+});
+
+// --- 3. LÓGICA DO ROBÔ (SEU CÓDIGO ORIGINAL) ---
+const sessoes = {}; 
+const STAGES = { INICIO: 0, MENU: 1, ESCOLHA_QUEIJO: 2, ADICIONAIS_ITEM: 3, OBSERVACOES: 4, MORADA: 5, PAGAMENTO: 6, TROCO: 7 };
 
 client.on('message', async message => {
     const chat = await message.getChat();
@@ -203,4 +242,5 @@ client.on('message', async message => {
     }
 });
 
+// Inicializa o robô
 client.initialize();
