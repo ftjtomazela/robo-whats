@@ -1,18 +1,22 @@
 {
-  "name": "bot-delivery",
+  "name": "robo-dona-baguete",
   "version": "1.0.0",
-  "description": "",
+  "description": "Bot de WhatsApp para pedidos",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
+    "express": "^4.18.2",
+    "qrcode": "^1.5.3",
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.34.2"
+    "whatsapp-web.js": "^1.23.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
